@@ -18,5 +18,5 @@ func TestDecodeRotDataAndResize(t *testing.T) {
 }
 
 func TestDecodeByPath(t *testing.T) {
-	DecodeByPath("sample")
+	DecodeByPath("../sample")
 }
