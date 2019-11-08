@@ -35,7 +35,7 @@ func TestGetCardList(t *testing.T) {
 
 func TestStartConvert(t *testing.T) {
 	contentRoot := "http://content.cc.mobimon.com.tw/382/Prod/"
-	StartConvert(contentRoot)
+	StartConvert(contentRoot, true, 10, "./images")
 }
 
 func TestConvertToJpgFileByScrUrl(t *testing.T) {

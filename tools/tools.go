@@ -22,6 +22,7 @@ import (
 )
 
 var wg sync.WaitGroup
+var debug = false
 
 // DecodeByPath decodes all scr by given `path` and save the resized jpg file in the same folder
 func DecodeByPath(path string) {
@@ -111,7 +112,6 @@ func DecodeRotData(from []byte) []byte {
 func ResizeImage(data []byte, width uint, height uint) []byte {
 	image, _, _ := image.Decode(bytes.NewReader(data))
 	// check err
-
 	newImage := resize.Resize(width, height, image, resize.Lanczos3)
 
 	// Encode uses a Writer, use a Buffer if you need the raw []byte
@@ -144,28 +144,29 @@ func simpleGet(url string) (data []byte, err error) {
 	return ioutil.ReadAll(res.Body)
 }
 
-func StartConvert(contentRoot string) {
+func StartConvert(contentRoot string, d bool, concurrence int, outputFolder string) {
+	debug = d
 
-	//
-	folderToSave := "images"
-	err := os.MkdirAll(folderToSave, os.ModePerm)
+	err := os.MkdirAll(outputFolder, os.ModePerm)
 	if err != nil {
 		panic(err)
 	}
 
-	var workerCount = 50
-
 	scrList, _ := GetCardList(contentRoot)
+	if debug {
+		fmt.Println(scrList)
+	}
 	msg := make(chan string)
 
 	// produce msg
 	go produceScr(msg, scrList)
 
-	wg.Add(workerCount)
-	for idx := 0; idx < workerCount; idx++ {
-		go consumeScr(msg, idx, folderToSave)
+	wg.Add(concurrence)
+	for idx := 0; idx < concurrence; idx++ {
+		go consumeScr(msg, idx, outputFolder)
 	}
 	wg.Wait()
+	fmt.Println("Comlete!")
 }
 
 func produceScr(msg chan string, scrList []string) {
@@ -180,8 +181,11 @@ func consumeScr(msg chan string, workerID int, folderToSave string) {
 	for scr := range msg {
 		baseName := strings.ReplaceAll(path.Base(scr), "scr", "jpg")
 		filePath := filepath.Join(folderToSave, baseName)
-		// fmt.Printf("Worker[%d] start to cunsume: [%s] and saved to [%s]\n", workerID, scr, baseName)
-		fmt.Printf("Saving [%s]...\n", filePath)
+		if debug {
+			fmt.Printf("Worker[%d] start to cunsume: [%s] and saved to [%s]\n", workerID, scr, filePath)
+		} else {
+			fmt.Printf("Saving [%s]...\n", filePath)
+		}
 		convertToJpgFileByScrUrl(scr, filePath)
 	}
 	wg.Done()
@@ -190,7 +194,9 @@ func consumeScr(msg chan string, workerID int, folderToSave string) {
 func convertToJpgFileByScrUrl(scrUrl string, fPath string) {
 	data, err := simpleGet(scrUrl)
 	if err != nil {
-		fmt.Println(err)
+		if debug {
+			fmt.Println(err)
+		}
 	} else {
 		jppData := DecodeRotData(data)
 		finalJpgData := ResizeImage(jppData, 960, 1440)
