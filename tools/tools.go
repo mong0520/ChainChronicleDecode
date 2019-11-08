@@ -4,16 +4,24 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/jpeg"
 	"io/ioutil"
 	"log"
+	"net/http"
+	"os"
+	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/nfnt/resize"
 )
+
+var wg sync.WaitGroup
 
 // DecodeByPath decodes all scr by given `path` and save the resized jpg file in the same folder
 func DecodeByPath(path string) {
@@ -115,6 +123,106 @@ func ResizeImage(data []byte, width uint, height uint) []byte {
 		fmt.Println(err)
 	}
 	return b.Bytes()
+}
+
+func simpleGet(url string) (data []byte, err error) {
+	req, _ := http.NewRequest("GET", url, nil)
+
+	req.Header.Add("Host", "content.cc.mobimon.com.tw")
+	req.Header.Add("Accept-Encoding", "gzip, deflate")
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return data, err
+	}
+	if res.StatusCode != 200 {
+		return data, errors.New("not a valid url")
+	}
+
+	defer res.Body.Close()
+
+	return ioutil.ReadAll(res.Body)
+}
+
+func StartConvert(contentRoot string) {
+
+	//
+	folderToSave := "images"
+	err := os.MkdirAll(folderToSave, os.ModePerm)
+	if err != nil {
+		panic(err)
+	}
+
+	var workerCount = 50
+
+	scrList, _ := GetCardList(contentRoot)
+	msg := make(chan string)
+
+	// produce msg
+	go produceScr(msg, scrList)
+
+	wg.Add(workerCount)
+	for idx := 0; idx < workerCount; idx++ {
+		go consumeScr(msg, idx, folderToSave)
+	}
+	wg.Wait()
+}
+
+func produceScr(msg chan string, scrList []string) {
+	defer close(msg)
+
+	for _, scr := range scrList {
+		msg <- scr
+	}
+}
+
+func consumeScr(msg chan string, workerID int, folderToSave string) {
+	for scr := range msg {
+		baseName := strings.ReplaceAll(path.Base(scr), "scr", "jpg")
+		filePath := filepath.Join(folderToSave, baseName)
+		// fmt.Printf("Worker[%d] start to cunsume: [%s] and saved to [%s]\n", workerID, scr, baseName)
+		fmt.Printf("Saving [%s]...\n", filePath)
+		convertToJpgFileByScrUrl(scr, filePath)
+	}
+	wg.Done()
+}
+
+func convertToJpgFileByScrUrl(scrUrl string, fPath string) {
+	data, err := simpleGet(scrUrl)
+	if err != nil {
+		fmt.Println(err)
+	} else {
+		jppData := DecodeRotData(data)
+		finalJpgData := ResizeImage(jppData, 960, 1440)
+		ioutil.WriteFile(fPath, finalJpgData, 0644)
+	}
+}
+
+func GetCardList(contentRoot string) (scrList []string, err error) {
+	// url := "http://content.cc.mobimon.com.tw/382/Prod/Bdl54_iOS/files.json?cnt=16e48d9c78a&timestamp=1573180257282"
+	if strings.HasSuffix(contentRoot, "/") {
+		contentRoot = contentRoot[0 : len(contentRoot)-1]
+	}
+	url := contentRoot + "/Bdl54_iOS/files.json"
+
+	// fmt.Println(res)
+	// fmt.Println(string(body))
+	body, err := simpleGet(url)
+
+	rawData := map[string]interface{}{}
+	err = json.Unmarshal(body, &rawData)
+	if err != nil {
+		return scrList, err
+	}
+	files := rawData["files"].(map[string]interface{})
+	cardsOrgSize := files["Card_OrgSize"].(map[string]interface{})
+	for k := range cardsOrgSize {
+		scrName := strings.Replace(k, "bdl", "scr", -1)
+		scrURL := contentRoot + "/Resource/Card/" + scrName
+		scrList = append(scrList, scrURL)
+	}
+
+	return scrList, nil
 }
 
 func getBytes(x uint32) []byte {
